@@ -1,8 +1,8 @@
 /*
  * OpenVINS: An Open Platform for Visual-Inertial Research
- * Copyright (C) 2018-2022 Patrick Geneva
- * Copyright (C) 2018-2022 Guoquan Huang
- * Copyright (C) 2018-2022 OpenVINS Contributors
+ * Copyright (C) 2018-2023 Patrick Geneva
+ * Copyright (C) 2018-2023 Guoquan Huang
+ * Copyright (C) 2018-2023 OpenVINS Contributors
  * Copyright (C) 2018-2019 Kevin Eckenhoff
  *
  * This program is free software: you can redistribute it and/or modify
@@ -68,6 +68,18 @@ VioManager::VioManager(VioManagerOptions &params_) : thread_init_running(false),
 
   // Create the state!!
   state = std::make_shared<State>(params.state_options);
+
+  // Set the IMU intrinsics
+  state->_calib_imu_dw->set_value(params.vec_dw);
+  state->_calib_imu_dw->set_fej(params.vec_dw);
+  state->_calib_imu_da->set_value(params.vec_da);
+  state->_calib_imu_da->set_fej(params.vec_da);
+  state->_calib_imu_tg->set_value(params.vec_tg);
+  state->_calib_imu_tg->set_fej(params.vec_tg);
+  state->_calib_imu_GYROtoIMU->set_value(params.q_GYROtoIMU);
+  state->_calib_imu_GYROtoIMU->set_fej(params.q_GYROtoIMU);
+  state->_calib_imu_ACCtoIMU->set_value(params.q_ACCtoIMU);
+  state->_calib_imu_ACCtoIMU->set_fej(params.q_ACCtoIMU);
 
   // Timeoffset from camera to IMU
   Eigen::VectorXd temp_camimu_dt;
@@ -149,9 +161,6 @@ VioManager::VioManager(VioManagerOptions &params_) : thread_init_running(false),
                                                         propagator, params.gravity_mag, params.zupt_max_velocity,
                                                         params.zupt_noise_multiplier, params.zupt_max_disparity);
   }
-
-  // Feature initializer for active tracks
-  active_tracks_initializer = std::make_shared<FeatureInitializer>(params.featinit_options);
 }
 
 void VioManager::feed_measurement_imu(const ov_core::ImuData &message) {
@@ -218,6 +227,7 @@ void VioManager::feed_measurement_simulation(double timestamp, const std::vector
       assert(state->_timestamp == timestamp);
       propagator->clean_old_imu_measurements(timestamp + state->_calib_dt_CAMtoIMU->value()(0) - 0.10);
       updaterZUPT->clean_old_imu_measurements(timestamp + state->_calib_dt_CAMtoIMU->value()(0) - 0.10);
+      propagator->invalidate_cache();
       return;
     }
   }
@@ -290,6 +300,7 @@ void VioManager::track_image_and_update(const ov_core::CameraData &message_const
       assert(state->_timestamp == message.timestamp);
       propagator->clean_old_imu_measurements(message.timestamp + state->_calib_dt_CAMtoIMU->value()(0) - 0.10);
       updaterZUPT->clean_old_imu_measurements(message.timestamp + state->_calib_dt_CAMtoIMU->value()(0) - 0.10);
+      propagator->invalidate_cache();
       return;
     }
   }
@@ -512,6 +523,7 @@ void VioManager::do_feature_propagate_update(const ov_core::CameraData &message)
   if ((int)featsup_MSCKF.size() > state->_options.max_msckf_in_update)
     featsup_MSCKF.erase(featsup_MSCKF.begin(), featsup_MSCKF.end() - state->_options.max_msckf_in_update);
   updaterMSCKF->update(state, featsup_MSCKF);
+  propagator->invalidate_cache();
   rT4 = boost::posix_time::microsec_clock::local_time();
 
   // Perform SLAM delay init and update
@@ -528,6 +540,7 @@ void VioManager::do_feature_propagate_update(const ov_core::CameraData &message)
     // Do the update
     updaterSLAM->update(state, featsup_TEMP);
     feats_slam_UPDATE_TEMP.insert(feats_slam_UPDATE_TEMP.end(), featsup_TEMP.begin(), featsup_TEMP.end());
+    propagator->invalidate_cache();
   }
   feats_slam_UPDATE = feats_slam_UPDATE_TEMP;
   rT5 = boost::posix_time::microsec_clock::local_time();
@@ -665,5 +678,37 @@ void VioManager::do_feature_propagate_update(const ov_core::CameraData &message)
       PRINT_INFO("cam%d extrinsics = %.3f,%.3f,%.3f,%.3f | %.3f,%.3f,%.3f\n", (int)i, calib->quat()(0), calib->quat()(1), calib->quat()(2),
                  calib->quat()(3), calib->pos()(0), calib->pos()(1), calib->pos()(2));
     }
+  }
+
+  // Debug for imu intrinsics
+  if (state->_options.do_calib_imu_intrinsics && state->_options.imu_model == StateOptions::ImuModel::KALIBR) {
+    PRINT_INFO("q_GYROtoI = %.3f,%.3f,%.3f,%.3f\n", state->_calib_imu_GYROtoIMU->value()(0), state->_calib_imu_GYROtoIMU->value()(1),
+               state->_calib_imu_GYROtoIMU->value()(2), state->_calib_imu_GYROtoIMU->value()(3));
+  }
+  if (state->_options.do_calib_imu_intrinsics && state->_options.imu_model == StateOptions::ImuModel::RPNG) {
+    PRINT_INFO("q_ACCtoI = %.3f,%.3f,%.3f,%.3f\n", state->_calib_imu_ACCtoIMU->value()(0), state->_calib_imu_ACCtoIMU->value()(1),
+               state->_calib_imu_ACCtoIMU->value()(2), state->_calib_imu_ACCtoIMU->value()(3));
+  }
+  if (state->_options.do_calib_imu_intrinsics && state->_options.imu_model == StateOptions::ImuModel::KALIBR) {
+    PRINT_INFO("Dw = | %.4f,%.4f,%.4f | %.4f,%.4f | %.4f |\n", state->_calib_imu_dw->value()(0), state->_calib_imu_dw->value()(1),
+               state->_calib_imu_dw->value()(2), state->_calib_imu_dw->value()(3), state->_calib_imu_dw->value()(4),
+               state->_calib_imu_dw->value()(5));
+    PRINT_INFO("Da = | %.4f,%.4f,%.4f | %.4f,%.4f | %.4f |\n", state->_calib_imu_da->value()(0), state->_calib_imu_da->value()(1),
+               state->_calib_imu_da->value()(2), state->_calib_imu_da->value()(3), state->_calib_imu_da->value()(4),
+               state->_calib_imu_da->value()(5));
+  }
+  if (state->_options.do_calib_imu_intrinsics && state->_options.imu_model == StateOptions::ImuModel::RPNG) {
+    PRINT_INFO("Dw = | %.4f | %.4f,%.4f | %.4f,%.4f,%.4f |\n", state->_calib_imu_dw->value()(0), state->_calib_imu_dw->value()(1),
+               state->_calib_imu_dw->value()(2), state->_calib_imu_dw->value()(3), state->_calib_imu_dw->value()(4),
+               state->_calib_imu_dw->value()(5));
+    PRINT_INFO("Da = | %.4f | %.4f,%.4f | %.4f,%.4f,%.4f |\n", state->_calib_imu_da->value()(0), state->_calib_imu_da->value()(1),
+               state->_calib_imu_da->value()(2), state->_calib_imu_da->value()(3), state->_calib_imu_da->value()(4),
+               state->_calib_imu_da->value()(5));
+  }
+  if (state->_options.do_calib_imu_intrinsics && state->_options.do_calib_imu_g_sensitivity) {
+    PRINT_INFO("Tg = | %.4f,%.4f,%.4f |  %.4f,%.4f,%.4f | %.4f,%.4f,%.4f |\n", state->_calib_imu_tg->value()(0),
+               state->_calib_imu_tg->value()(1), state->_calib_imu_tg->value()(2), state->_calib_imu_tg->value()(3),
+               state->_calib_imu_tg->value()(4), state->_calib_imu_tg->value()(5), state->_calib_imu_tg->value()(6),
+               state->_calib_imu_tg->value()(7), state->_calib_imu_tg->value()(8));
   }
 }

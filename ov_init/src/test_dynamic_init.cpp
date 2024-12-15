@@ -1,8 +1,8 @@
 /*
  * OpenVINS: An Open Platform for Visual-Inertial Research
- * Copyright (C) 2018-2022 Patrick Geneva
- * Copyright (C) 2018-2022 Guoquan Huang
- * Copyright (C) 2018-2022 OpenVINS Contributors
+ * Copyright (C) 2018-2023 Patrick Geneva
+ * Copyright (C) 2018-2023 Guoquan Huang
+ * Copyright (C) 2018-2023 OpenVINS Contributors
  * Copyright (C) 2018-2019 Kevin Eckenhoff
  *
  * This program is free software: you can redistribute it and/or modify
@@ -311,13 +311,13 @@ int main(int argc, char **argv) {
         sensor_msgs::PointCloud2 cloud;
         cloud.header.frame_id = "global";
         cloud.header.stamp = ros::Time::now();
-        cloud.width = 3 * _features_SLAM.size();
+        cloud.width = _features_SLAM.size();
         cloud.height = 1;
         cloud.is_bigendian = false;
         cloud.is_dense = false; // there may be invalid points
         sensor_msgs::PointCloud2Modifier modifier(cloud);
         modifier.setPointCloud2FieldsByString(1, "xyz");
-        modifier.resize(3 * _features_SLAM.size());
+        modifier.resize(_features_SLAM.size());
         sensor_msgs::PointCloud2Iterator<float> out_x(cloud, "x");
         sensor_msgs::PointCloud2Iterator<float> out_y(cloud, "y");
         sensor_msgs::PointCloud2Iterator<float> out_z(cloud, "z");
